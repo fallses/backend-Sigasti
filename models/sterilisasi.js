@@ -16,15 +16,16 @@ const setSchema = new mongoose.Schema({
 // ── Koleksi: data dari topik sterilisasi/running ──────────
 // Menyimpan status proses yang dikirim alat ke backend
 const runningSchema = new mongoose.Schema({
-  action:   { type: String },
-  suhu:     { type: Number },
-  tekanan:  { type: Number },
-  waktu:    { type: mongoose.Schema.Types.Mixed },
-  timer:    { type: String }, // Timer dari alat (format: "00:00:00")
-  device:   { type: String },
-  sesi:     { type: String },
-  status:   { type: String },
-  createdAt:{ type: Date, default: Date.now },
+  action:    { type: String },
+  suhu:      { type: Number },
+  tekanan:   { type: Number },
+  waktu:     { type: mongoose.Schema.Types.Mixed },
+  timer:     { type: String }, // Timer dari alat (format: "00:00:00")
+  device:    { type: String },
+  sesi:      { type: String },
+  status:    { type: String },
+  percobaan: { type: Number }, // Jumlah percobaan ignition (untuk ignition_failed)
+  createdAt: { type: Date, default: Date.now },
 });
 
 // ── Koleksi: data dari topik sterilisasi/finish ───────────

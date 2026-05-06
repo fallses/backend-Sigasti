@@ -123,7 +123,7 @@ client.on("message", async (receivedTopic, message) => {
     return;
   }
 
-  const validActions = ["countdown", "running", "ignition", "stop"];
+  const validActions = ["countdown", "running", "ignition", "ignition_failed", "stop"];
   if (!validActions.includes(action)) {
     console.warn("Action tidak dikenali:", action);
     return;
@@ -137,13 +137,14 @@ client.on("message", async (receivedTopic, message) => {
 
   lastData = {
     action,
-    suhu:    data.suhu    ?? null,
-    tekanan: data.tekanan ?? null,
-    waktu:   data.waktu   ?? null, // Tidak menggunakan fallback, biarkan null jika tidak ada
-    timer:   data.timer   ?? null, // Timer dari alat (format: "00:00:00")
-    device:  data.Device  ?? data.device ?? null,
-    sesi:    data.sesi    ?? null,
-    status:  data.status  ?? null,
+    suhu:      data.suhu      ?? null,
+    tekanan:   data.tekanan   ?? null,
+    waktu:     data.waktu     ?? null, // Tidak menggunakan fallback, biarkan null jika tidak ada
+    timer:     data.timer     ?? null, // Timer dari alat (format: "00:00:00")
+    device:    data.Device    ?? data.device ?? null,
+    sesi:      data.sesi      ?? null,
+    status:    data.status    ?? null,
+    percobaan: data.percobaan ?? null, // Jumlah percobaan ignition (untuk ignition_failed)
   };
   console.log("lastData diperbarui:", lastData);
 
@@ -165,14 +166,15 @@ module.exports = {
   PUBLISH_TOPIC,
   updateLastDataWithStop: (device) => {
     lastData = {
-      action:  "stop",
-      suhu:    null,
-      tekanan: null,
-      waktu:   null,
-      timer:   null,
-      device:  device ?? null,
-      sesi:    null,
-      status:  null,
+      action:    "stop",
+      suhu:      null,
+      tekanan:   null,
+      waktu:     null,
+      timer:     null,
+      device:    device ?? null,
+      sesi:      null,
+      status:    null,
+      percobaan: null,
     };
     console.log("[MQTT] lastData diperbarui dengan action stop (dari frontend):", lastData);
   },
