@@ -202,7 +202,7 @@ router.patch("/history/:id", async (req, res) => {
     const updated = await Finish.findByIdAndUpdate(
       id,
       { notes: notes || "" },
-      { new: true }
+      { returnDocument: 'after' } // Updated: use returnDocument instead of new
     );
 
     if (!updated) {
