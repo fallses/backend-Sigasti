@@ -1,3 +1,5 @@
+require("dotenv").config(); // Load env vars PERTAMA KALI
+
 const express    = require("express");
 const cors       = require("cors");
 const connectDB  = require("./config/database");
