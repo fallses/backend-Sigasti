@@ -2,10 +2,11 @@ const mongoose = require("mongoose");
 
 const connectDB = async () => {
   try {
-    const mongoUri = process.env.MONGO_URI;
+    // Support both MONGODB_URI (Railway default) and MONGO_URI (local .env)
+    const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
     
     if (!mongoUri) {
-      console.error("❌ MONGO_URI tidak ditemukan di environment variables!");
+      console.error("❌ MONGODB_URI atau MONGO_URI tidak ditemukan!");
       console.log("Available env vars:", Object.keys(process.env).filter(k => k.includes('MONGO')));
       process.exit(1);
     }
