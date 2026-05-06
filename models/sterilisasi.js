@@ -34,6 +34,7 @@ const finishSchema = new mongoose.Schema({
   tekanan:  { type: Number },
   waktu:    { type: mongoose.Schema.Types.Mixed },
   device:   { type: String },
+  notes:    { type: String, default: "" }, // Catatan user untuk riwayat
   createdAt:{ type: Date, default: Date.now },
 });
 

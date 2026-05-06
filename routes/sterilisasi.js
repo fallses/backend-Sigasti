@@ -133,6 +133,7 @@ router.get("/history", async (_req, res) => {
           finishSuhu: finish.suhu,
           finishTekanan: finish.tekanan,
           createdAt: finish.createdAt,
+          notes: finish.notes || "",
         };
       })
     );
@@ -160,6 +161,55 @@ router.get("/finish/last", async (_req, res) => {
     console.log("[GET /sterilisasi/finish/last] Data finish di-consume:", JSON.stringify(dataToSend));
 
     res.json({ status: "success", data: dataToSend });
+  } catch (error) {
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// ── DELETE /sterilisasi/history/:id ───────────────────────────
+// Hapus riwayat berdasarkan ID
+router.delete("/history/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ status: "error", message: "ID tidak valid" });
+    }
+
+    const deleted = await Finish.findByIdAndDelete(id);
+
+    if (!deleted) {
+      return res.status(404).json({ status: "error", message: "Data tidak ditemukan" });
+    }
+
+    res.json({ status: "success", message: "Riwayat berhasil dihapus" });
+  } catch (error) {
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// ── PATCH /sterilisasi/history/:id ────────────────────────────
+// Update catatan riwayat berdasarkan ID
+router.patch("/history/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ status: "error", message: "ID tidak valid" });
+    }
+
+    const updated = await Finish.findByIdAndUpdate(
+      id,
+      { notes: notes || "" },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ status: "error", message: "Data tidak ditemukan" });
+    }
+
+    res.json({ status: "success", message: "Catatan berhasil diupdate", data: updated });
   } catch (error) {
     res.status(500).json({ status: "error", message: error.message });
   }
