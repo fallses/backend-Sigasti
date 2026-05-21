@@ -1,6 +1,6 @@
 const express    = require("express");
 const router     = express.Router();
-const { Set, Running, Finish } = require("../models/sterilisasi");
+const { Set, Running, Finish, Manual } = require("../models/sterilisasi");
 const mqttClient = require("../mqtt/mqttClient");
 
 // ── POST /sterilisasi/set ─────────────────────────────────────
@@ -63,25 +63,41 @@ router.get("/running", async (_req, res) => {
 // Frontend kirim perintah stop → publish ke topik sterilisasi/running
 router.post("/running", async (req, res) => {
   try {
-    const { action, device } = req.body;
+    const { action, device, suhu, tekanan } = req.body;
 
     if (!device) {
       return res.status(400).json({ status: "error", message: "Field device wajib diisi" });
     }
 
+    // Jika action adalah stop, kirim ke topic sterilisasi/finish
+    if (action === "stop" || !action) {
+      const mqttPayload = {
+        action: "stop",
+        suhu:   suhu    != null ? Number(suhu)    : 0,
+        tekanan: tekanan != null ? Number(tekanan) : 0,
+        device: device,
+      };
+
+      await mqttClient.publishStop(mqttPayload);
+
+      // Update lastData langsung agar frontend bisa detect stop
+      mqttClient.updateLastDataWithStop(device);
+
+      return res.json({ 
+        status: "success", 
+        message: `Perintah stop berhasil dikirim ke topik sterilisasi/finish` 
+      });
+    }
+
+    // Untuk action lain, kirim ke topic sterilisasi/running
     const mqttPayload = {
-      action: action || "stop",
+      action: action,
       Device: device,
     };
 
     await mqttClient.publishRunning(mqttPayload);
 
-    // Update lastData langsung agar frontend bisa detect stop
-    if (action === "stop" || !action) {
-      mqttClient.updateLastDataWithStop(device);
-    }
-
-    res.json({ status: "success", message: `Perintah ${action || "stop"} berhasil dikirim ke topik running` });
+    res.json({ status: "success", message: `Perintah ${action} berhasil dikirim ke topik running` });
   } catch (error) {
     res.status(500).json({ status: "error", message: error.message });
   }
@@ -126,6 +142,7 @@ router.get("/history", async (_req, res) => {
 
         return {
           _id: finish._id,
+          action: finish.action || "finish", // Include action dari finish ("finish" atau "stop")
           device: finish.device,
           suhu: matchingSet?.suhu ?? finish.suhu ?? 0,
           tekanan: matchingSet?.tekanan ?? finish.tekanan ?? 0,
@@ -213,6 +230,82 @@ router.patch("/history/:id", async (req, res) => {
   } catch (error) {
     res.status(500).json({ status: "error", message: error.message });
   }
+});
+
+// ── POST /sterilisasi/manual ──────────────────────────────────
+// Frontend kirim perintah manual control → publish ke MQTT sterilisasi/manual
+router.post("/manual", async (req, res) => {
+  try {
+    const { valve, gas, starter, suhureal, tekananreal, device } = req.body;
+
+    if (!device) {
+      return res.status(400).json({ status: "error", message: "Field device wajib diisi" });
+    }
+
+    // Validasi nilai valve
+    if (valve && !["OPEN", "CLOSE"].includes(valve)) {
+      return res.status(400).json({ 
+        status: "error", 
+        message: "Nilai valve harus OPEN atau CLOSE" 
+      });
+    }
+
+    // Validasi nilai gas
+    if (gas && !["TUTUP", "KECIL", "SEDANG", "BESAR"].includes(gas)) {
+      return res.status(400).json({ 
+        status: "error", 
+        message: "Nilai gas harus TUTUP, KECIL, SEDANG, atau BESAR" 
+      });
+    }
+
+    // Validasi nilai starter
+    if (starter && !["ON", "OFF"].includes(starter)) {
+      return res.status(400).json({ 
+        status: "error", 
+        message: "Nilai starter harus ON atau OFF" 
+      });
+    }
+
+    const mqttPayload = {
+      valve:       valve       ?? null,
+      gas:         gas         ?? null,
+      starter:     starter     ?? null,
+      suhureal:    suhureal    != null ? Number(suhureal)    : null,
+      tekananreal: tekananreal != null ? Number(tekananreal) : null,
+      device:      device,
+    };
+
+    await mqttClient.publishManual(mqttPayload);
+
+    res.json({ 
+      status: "success", 
+      message: "Perintah manual control berhasil dikirim",
+      data: mqttPayload
+    });
+  } catch (error) {
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// ── GET /sterilisasi/manual/last ──────────────────────────────
+// Ambil data manual control terbaru dari memory
+router.get("/manual/last", async (_req, res) => {
+  try {
+    const lastManual = mqttClient.getLastManualData();
+    res.json({ status: "success", data: lastManual });
+  } catch (error) {
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
+
+// ── GET /sterilisasi/manual ───────────────────────────────────
+// History manual control - DISABLED (data tidak disimpan ke database)
+router.get("/manual", async (_req, res) => {
+  res.json({ 
+    status: "info", 
+    message: "History manual control tidak tersedia. Data hanya disimpan di memory untuk real-time access.",
+    data: [] 
+  });
 });
 
 module.exports = router;
