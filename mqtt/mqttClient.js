@@ -1,7 +1,8 @@
 require("dotenv").config();
 const mqtt   = require("mqtt");
 const broker = "mqtt://broker.hivemq.com";
-const { Set, Running, Finish, Manual } = require("../models/sterilisasi");
+const { Set, Running, Finish, Manual, History } = require("../models/sterilisasi");
+const { createHistory, addRunningData, finishHistory } = require("./historyHelper");
 
 /**
  * TOPIK MQTT:
@@ -72,19 +73,32 @@ client.on("message", async (receivedTopic, message) => {
   // ── Topik sterilisasi/set ─────────────────────────────────
   if (receivedTopic === SET_TOPIC) {
     const action = data.action ?? null;
-    console.log(`[sterilisasi/set] Menerima perintah: ${action}`);
+    
+    // ANTI-LOOP: Abaikan message yang dikirim oleh backend sendiri
+    if (data.source === "backend") {
+      console.log("[sterilisasi/set] Message dari backend sendiri, diabaikan (anti-loop)");
+      return;
+    }
+    
+    console.log(`[sterilisasi/set] Menerima perintah: ${action}, batch_id: ${data.batch_id ?? 'tidak ada'}`);
     try {
       const setData = {
         action,
         device:   data.Device  ?? data.device ?? "unknown",
         namaAlat: data.namaAlat ?? "",
         status:   action === "start" ? "running" : (action === "stop" ? "dihentikan" : "unknown"),
+        batch_id: data.batch_id ?? null, // Simpan batch_id
       };
       if (data.suhu    != null) setData.suhu    = data.suhu;
       if (data.tekanan != null) setData.tekanan = data.tekanan;
       if (data.waktu   != null) setData.waktu   = data.waktu;
       await new Set(setData).save();
-      console.log(`[sterilisasi/set] Disimpan: action=${action}`);
+      console.log(`[sterilisasi/set] Disimpan: action=${action}, batch_id=${setData.batch_id}`);
+      
+      // ── Simpan ke History (jika action=start dan ada batch_id) ──
+      if (action === "start" && setData.batch_id) {
+        await createHistory(data);
+      }
     } catch (error) {
       console.error("[sterilisasi/set] Gagal simpan:", error.message);
     }
@@ -95,34 +109,47 @@ client.on("message", async (receivedTopic, message) => {
   if (receivedTopic === FINISH_TOPIC) {
     const action = data.action ?? "finish"; // Default action adalah "finish"
     
+    // ANTI-LOOP: Abaikan message yang dikirim oleh backend sendiri
+    if (data.source === "backend") {
+      console.log("[sterilisasi/finish] Message dari backend sendiri, diabaikan (anti-loop)");
+      return;
+    }
+    
     lastFinishData = {
-      action:  action, // Bisa "finish" atau "stop"
-      suhu:    data.suhu    ?? null,
-      tekanan: data.tekanan ?? null,
-      waktu:   data.waktu   ?? null,
-      device:  data.Device  ?? data.device ?? null,
+      action:   action, // Bisa "finish" atau "stop"
+      suhu:     data.suhu     ?? null,
+      tekanan:  data.tekanan  ?? null,
+      waktu:    data.waktu    ?? null,
+      device:   data.Device   ?? data.device ?? null,
+      batch_id: data.batch_id ?? null, // Simpan batch_id
     };
     finishConsumed = false;
     finishTimestamp = Date.now(); // Catat waktu finish diterima
-    console.log(`[sterilisasi/finish] lastFinishData diperbarui (action=${action}):`, lastFinishData);
+    console.log(`[sterilisasi/finish] lastFinishData diperbarui (action=${action}, batch_id=${lastFinishData.batch_id}):`, lastFinishData);
     
     // Update lastData juga agar frontend bisa detect action finish/stop
     lastData = {
       action:    action,
-      suhu:      data.suhu    ?? null,
-      tekanan:   data.tekanan ?? null,
-      waktu:     data.waktu   ?? null,
+      suhu:      data.suhu     ?? null,
+      tekanan:   data.tekanan  ?? null,
+      waktu:     data.waktu    ?? null,
       timer:     null,
-      device:    data.Device  ?? data.device ?? null,
+      device:    data.Device   ?? data.device ?? null,
       sesi:      null,
       status:    null,
       percobaan: null,
+      batch_id:  data.batch_id ?? null, // Simpan batch_id
     };
-    console.log(`[sterilisasi/finish] lastData diperbarui dengan action ${action}:`, lastData);
+    console.log(`[sterilisasi/finish] lastData diperbarui dengan action ${action}, batch_id=${lastData.batch_id}:`, lastData);
     
     try {
       await new Finish(lastFinishData).save();
-      console.log(`[sterilisasi/finish] Disimpan ke collection Finish (action=${action})`);
+      console.log(`[sterilisasi/finish] Disimpan ke collection Finish (action=${action}, batch_id=${lastFinishData.batch_id})`);
+      
+      // ── Update History dengan data finish (jika ada batch_id) ──
+      if (lastFinishData.batch_id) {
+        await finishHistory(lastFinishData);
+      }
     } catch (error) {
       console.error("[sterilisasi/finish] Gagal simpan:", error.message);
     }
@@ -165,6 +192,12 @@ client.on("message", async (receivedTopic, message) => {
     return;
   }
 
+  // ANTI-LOOP: Abaikan message yang dikirim oleh backend sendiri
+  if (data.source === "backend") {
+    console.log("[sterilisasi/running] Message dari backend sendiri, diabaikan (anti-loop)");
+    return;
+  }
+
   const validActions = ["countdown", "running", "ignition", "ignition_failed", "stop"];
   if (!validActions.includes(action)) {
     console.warn("Action tidak dikenali:", action);
@@ -187,12 +220,18 @@ client.on("message", async (receivedTopic, message) => {
     sesi:      data.sesi      ?? null,
     status:    data.status    ?? null,
     percobaan: data.percobaan ?? null, // Jumlah percobaan ignition (untuk ignition_failed)
+    batch_id:  data.batch_id  ?? null, // Simpan batch_id
   };
   console.log("lastData diperbarui:", lastData);
 
   try {
     await new Running(lastData).save();
-    console.log(`[sterilisasi/running] Disimpan: action=${action}`);
+    console.log(`[sterilisasi/running] Disimpan: action=${action}, batch_id=${lastData.batch_id}`);
+    
+    // ── Tambah ke History.runningData (jika ada batch_id) ──
+    if (lastData.batch_id && action === "running") {
+      await addRunningData(lastData);
+    }
   } catch (error) {
     console.error("[sterilisasi/running] Gagal simpan:", error.message);
   }
@@ -208,7 +247,7 @@ module.exports = {
   getLastManualData: () => lastManualData,
   PUBLISH_TOPIC,
   MANUAL_TOPIC,
-  updateLastDataWithStop: (device) => {
+  updateLastDataWithStop: (device, batch_id = null) => {
     lastData = {
       action:    "stop",
       suhu:      null,
@@ -219,22 +258,35 @@ module.exports = {
       sesi:      null,
       status:    null,
       percobaan: null,
+      batch_id:  batch_id,
     };
-    console.log("[MQTT] lastData diperbarui dengan action stop (dari frontend):", lastData);
+    console.log(`[MQTT] lastData diperbarui dengan action stop (dari frontend), batch_id=${batch_id}:`, lastData);
   },
   publishSet: (payload) => {
     return new Promise((resolve, reject) => {
-      client.publish(PUBLISH_TOPIC, JSON.stringify(payload), (err) => {
+      // Tambahkan field source: "backend" untuk anti-loop
+      const payloadWithSource = {
+        ...payload,
+        source: "backend"
+      };
+      
+      client.publish(PUBLISH_TOPIC, JSON.stringify(payloadWithSource), (err) => {
         if (err) reject(err);
-        else { console.log(`[PUBLISH] ${PUBLISH_TOPIC}:`, JSON.stringify(payload)); resolve(); }
+        else { console.log(`[PUBLISH] ${PUBLISH_TOPIC}:`, JSON.stringify(payloadWithSource)); resolve(); }
       });
     });
   },
   publishStop: (payload) => {
     return new Promise((resolve, reject) => {
-      client.publish(FINISH_TOPIC, JSON.stringify(payload), (err) => {
+      // Tambahkan field source: "backend" untuk anti-loop
+      const payloadWithSource = {
+        ...payload,
+        source: "backend"
+      };
+      
+      client.publish(FINISH_TOPIC, JSON.stringify(payloadWithSource), (err) => {
         if (err) reject(err);
-        else { console.log(`[PUBLISH] ${FINISH_TOPIC}:`, JSON.stringify(payload)); resolve(); }
+        else { console.log(`[PUBLISH] ${FINISH_TOPIC}:`, JSON.stringify(payloadWithSource)); resolve(); }
       });
     });
   },
@@ -254,9 +306,15 @@ module.exports = {
   },
   publishRunning: (payload) => {
     return new Promise((resolve, reject) => {
-      client.publish(SUBSCRIBE_TOPIC, JSON.stringify(payload), (err) => {
+      // Tambahkan field source: "backend" untuk anti-loop
+      const payloadWithSource = {
+        ...payload,
+        source: "backend"
+      };
+      
+      client.publish(SUBSCRIBE_TOPIC, JSON.stringify(payloadWithSource), (err) => {
         if (err) reject(err);
-        else { console.log(`[PUBLISH] ${SUBSCRIBE_TOPIC}:`, JSON.stringify(payload)); resolve(); }
+        else { console.log(`[PUBLISH] ${SUBSCRIBE_TOPIC}:`, JSON.stringify(payloadWithSource)); resolve(); }
       });
     });
   },
